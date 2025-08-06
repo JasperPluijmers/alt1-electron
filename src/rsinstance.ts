@@ -132,6 +132,7 @@ export class RsInstance extends TypedEmitter<RsInstanceEvents>{
 
 		rsInstances.push(this);
 		console.log(`new rs client tracked with handle: ${this.window.handle}`);
+		console.log(`new rs client tracked with title: ${this.window.getTitle()}`);
 	}
 
 	@boundMethod

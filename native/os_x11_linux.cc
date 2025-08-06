@@ -44,6 +44,7 @@ std::mutex rsDepthMutex; // Locks the rsDepth variable
 void WindowThread();
 void RecordThread();
 void StartWindowThread();
+void PrintWindowInfo(const xcb_window_t);
 
 JSRectangle OSWindow::GetBounds() {
 	return GetClientBounds();
@@ -124,6 +125,7 @@ OSWindow OSWindow::FromJsValue(const Napi::Value jsval) {
 
 bool IsRsWindow(const xcb_window_t window) {
 	ensureConnection();
+	PrintWindowInfo(window);
 	constexpr uint32_t long_length = 64; // Any length higher than 2x+3 of the longest string we may match is fine
 	// Check window class (WM_CLASS property); this is set by the application controlling the window
 	// Also check WM_TRANSIENT_FOR is not set, this will be set on things like popups
@@ -138,7 +140,8 @@ bool IsRsWindow(const xcb_window_t window) {
 			memcpy(buffer, xcb_get_property_value(replyProp), len);
 			// first is instance name, then class name - both null terminated. we want class name.
 			const char* classname = buffer + strlen(buffer) + 1;
-			if (strcmp(classname, "RuneScape") == 0 || strcmp(classname, "steam_app_1343400") == 0 || strcmp(classname, "rs2client.exe") == 0) {
+			std::cout << classname << std::endl;
+			if (strcmp(classname, "RuneScape") == 0 || strcmp(classname, "rs2client.exe") == 0) {
 				auto replyTransient = xcb_get_property_reply(connection, cookieTransient, NULL);
 				if (replyTransient && xcb_get_property_value_length(replyTransient) == 0) {
 					free(replyProp);
@@ -149,6 +152,69 @@ bool IsRsWindow(const xcb_window_t window) {
 	}
 	free(replyProp);
 	return false;
+}
+
+void PrintWindowInfo(xcb_window_t window) {
+    ensureConnection();
+
+    // --- Get Geometry ---
+    xcb_get_geometry_cookie_t geom_cookie = xcb_get_geometry(connection, window);
+    xcb_get_geometry_reply_t* geom = xcb_get_geometry_reply(connection, geom_cookie, nullptr);
+    if (geom) {
+        std::cout << "Geometry: " << "x=" << int(geom->x) << ", y=" << int(geom->y)
+                  << ", width=" << geom->width << ", height=" << geom->height << std::endl;
+        free(geom);
+    }
+
+    // --- Get Attributes ---
+    xcb_get_window_attributes_cookie_t attr_cookie = xcb_get_window_attributes(connection, window);
+    xcb_get_window_attributes_reply_t* attr = xcb_get_window_attributes_reply(connection, attr_cookie, nullptr);
+    if (attr) {
+        std::cout << "Attributes: map_state=" << int(attr->map_state)
+                  << ", override_redirect=" << attr->override_redirect << std::endl;
+        free(attr);
+    }
+
+    // --- Get WM_CLASS ---
+    xcb_get_property_cookie_t wm_class_cookie = xcb_get_property(connection, 0, window, XCB_ATOM_WM_CLASS, XCB_ATOM_STRING, 0, 64);
+    xcb_get_property_reply_t* wm_class_reply = xcb_get_property_reply(connection, wm_class_cookie, nullptr);
+    if (wm_class_reply) {
+        int len = xcb_get_property_value_length(wm_class_reply);
+        if (len > 0 && len < 64) {
+            const char* data = static_cast<const char*>(xcb_get_property_value(wm_class_reply));
+            std::cout << "WM_CLASS: ";
+            for (int i = 0; i < len; ++i) {
+                if (data[i] == '\0') std::cout << " | ";
+                else std::cout << data[i];
+            }
+            std::cout << std::endl;
+        }
+        free(wm_class_reply);
+    }
+
+    // --- Get WM_NAME ---
+    xcb_get_property_cookie_t wm_name_cookie = xcb_get_property(connection, 0, window, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 0, 64);
+    xcb_get_property_reply_t* wm_name_reply = xcb_get_property_reply(connection, wm_name_cookie, nullptr);
+    if (wm_name_reply) {
+        int len = xcb_get_property_value_length(wm_name_reply);
+        if (len > 0 && len < 64) {
+            std::string name(static_cast<const char*>(xcb_get_property_value(wm_name_reply)), len);
+            std::cout << "WM_NAME: " << name << std::endl;
+        }
+        free(wm_name_reply);
+    }
+
+    // --- WM_TRANSIENT_FOR ---
+    xcb_get_property_cookie_t transient_cookie = xcb_get_property(connection, 0, window, XCB_ATOM_WM_TRANSIENT_FOR, XCB_ATOM_WINDOW, 0, 1);
+    xcb_get_property_reply_t* transient_reply = xcb_get_property_reply(connection, transient_cookie, nullptr);
+    if (transient_reply) {
+        if (xcb_get_property_value_length(transient_reply) > 0) {
+            std::cout << "Has WM_TRANSIENT_FOR set." << std::endl;
+        } else {
+            std::cout << "No WM_TRANSIENT_FOR." << std::endl;
+        }
+        free(transient_reply);
+    }
 }
 
 void GetRsHandlesRecursively(const xcb_window_t window, std::vector<OSWindow>* out, unsigned int depth = 0) {
